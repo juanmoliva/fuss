@@ -161,9 +161,24 @@ func main() {
 			for target := range output {
 				added := targetColl.AddIfNotExists(target)
 				if added {
-					target.XssScan(&httpClients[i])
-					target.SQLiScan(&httpClients[i])
-					target.ScanForServerErrors(&httpClients[i])
+
+					err := target.XssScan(&httpClients[i])
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "fuss, failed to scan for xss: %s\n", err)
+						target.XssScan(&httpClients[i])
+					}
+
+					err = target.SQLiScan(&httpClients[i])
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "fuss, failed to scan for sqli: %s\n", err)
+						target.SQLiScan(&httpClients[i])
+					}
+
+					err = target.ScanForServerErrors(&httpClients[i])
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "fuss, failed to scan for server errors: %s\n", err)
+						target.ScanForServerErrors(&httpClients[i])
+					}
 				}
 
 			}

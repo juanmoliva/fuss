@@ -88,6 +88,9 @@ var XssCheckingPayloads = map[string]string{
 
 var encodingsPayload = "f%5cu0075sscanaryf%2575sscanaryf%26%23x75%3bsscanary"
 
+var encodingsPayloadQuotes = "fuss%5cu0022canaryfuss%2522canaryfuss%26%23x22%3bcanary"
+var encodingsPayloadAngle = "fuss%5cu003Ccanaryfuss%253Ccanaryfuss%26%23x3C%3Bcanary"
+
 // []string{"fuss'canary", "fuss\"canary", "fuss<canary"}
 var XssReflectionPatterns = map[string]string{
 	"single": "fuss'canary",
@@ -107,6 +110,17 @@ func (t *FussTarget) XssScan(client *requests.HttpClient) error {
 	case PARAM:
 		canaryUrl = strings.ReplaceAll(t.Url, ReplaceFuss, canary)
 	case PARAM_DISCOVERY:
+		/* commonXssParams := []string{
+			"q", "s", "search", "query", "keyword", "lang", "id", "locale",
+		}
+		var basicCanariesCommonParams string
+
+		for _, param := range commonXssParams {
+			basicCanariesCommonParams += fmt.Sprintf("&%s=%s", param, canary)
+		}
+
+		// final string of params will be like: &q=fusscanary&s=fusscanary&search=fusscanary&query=fusscanary&keyword=fusscanary&lang=fusscanary&id=fusscanary&locale=fusscanary
+		*/
 		if strings.Contains(t.Url, "?") {
 			canaryUrl = t.Url + "&" + canary
 		} else {
@@ -184,7 +198,23 @@ func (t *FussTarget) XssScan(client *requests.HttpClient) error {
 			}
 
 			if strings.Contains(string(ResponseEncodings.Body), "fusscanary") {
-				xssRefs = append(xssRefs, "A WEIRD ENCODING REFLECTION")
+				ResponseEncodingsQuotes, err := client.Make(strings.ReplaceAll(canaryUrl, canary, encodingsPayloadQuotes), httpReqConfig)
+				if err != nil {
+					return fmt.Errorf("failed to make request: %s", err)
+				}
+
+				if strings.Contains(string(ResponseEncodingsQuotes.Body), XssReflectionPatterns["double"]) {
+					xssRefs = append(xssRefs, "weird-encoding-quotes")
+				}
+
+				ResponseEncodingsAngle, err := client.Make(strings.ReplaceAll(canaryUrl, canary, encodingsPayloadAngle), httpReqConfig)
+				if err != nil {
+					return fmt.Errorf("failed to make request: %s", err)
+				}
+
+				if strings.Contains(string(ResponseEncodingsAngle.Body), XssReflectionPatterns["angle"]) {
+					xssRefs = append(xssRefs, "weird-encoding-angle")
+				}
 			}
 
 		}
@@ -193,11 +223,10 @@ func (t *FussTarget) XssScan(client *requests.HttpClient) error {
 			if len(xssRefs) == 1 && xssRefs[0] == "single" {
 				if leftFoundSingleQ || rightFoundSingleQ {
 					// fair change of single quote xss
-					fmt.Printf("XSS Reflections found for %s  (fair change of single quote xss): , type: %d, param: %s,  original value: %s: %s\n", t.Url, t.Type, t.ParamKey, t.OriginalValue, strings.Join(xssRefs, ", "))
+					PrintXssResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, xssRefs, "fair change of single quote xss")
 				}
 			} else {
-				fmt.Printf("XSS Reflections found for %s: , type: %d, param: %s, original value: %s: %s\n", t.Url, t.Type, t.ParamKey, t.OriginalValue, strings.Join(xssRefs, ", "))
-
+				PrintXssResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, xssRefs, "")
 			}
 		}
 
@@ -213,6 +242,7 @@ type ResponseData struct {
 }
 
 var Responses = map[string]ResponseData{}
+var ResponsesMutex = sync.RWMutex{}
 
 func (t *FussTarget) SQLiScan(client *requests.HttpClient) error {
 
@@ -239,6 +269,7 @@ func (t *FussTarget) SQLiScan(client *requests.HttpClient) error {
 
 	responseData := ResponseData{}
 	var originalUrl = strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue)
+	ResponsesMutex.Lock()
 	if _, ok := Responses[originalUrl]; ok {
 		responseData = Responses[originalUrl]
 
@@ -255,28 +286,60 @@ func (t *FussTarget) SQLiScan(client *requests.HttpClient) error {
 			WordsCount:    len(strings.Fields(string(originalResp.Body))),
 		}
 	}
+	ResponsesMutex.Unlock()
 
-	sqlCommentUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%2f**%2f")
+	sqlCommentUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%252f**%252f")
 	addZeroUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%2b0")
-	addSingleQuoteUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"'")
-	addDoubleQuoteUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%22")
 
 	sqlCommentResp, err := client.Make(sqlCommentUrl, httpReqConfig)
 	if err != nil {
 		fmt.Println(fmt.Errorf("failed to make request: %s", err))
 	} else {
-
 		if sqlCommentResp.Status == responseData.Status && len(strings.Fields(string(sqlCommentResp.Body))) == responseData.WordsCount {
-			sqlCommentModurl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"s%2f**%2f")
-			sqlCommentModResp, err := client.Make(sqlCommentModurl, httpReqConfig)
+			var sqliInfo string
+			var found403s bool
 
+			sqlCommentModErrorUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"s%252f**%252f")
+			sqlCommentModGoodUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%252f*ss*%252f")
+
+			sqlCommentModErrorResp, err := client.Make(sqlCommentModErrorUrl, httpReqConfig)
 			if err != nil {
 				return fmt.Errorf("failed to make request: %s", err)
 			}
 
-			if sqlCommentModResp.Status != responseData.Status || len(strings.Fields(string(sqlCommentModResp.Body))) != responseData.WordsCount {
-				fmt.Printf("SQLi Reflections found for %s: , type: %d, param: %s, original value: %s: SQL Comment\n", t.Url, t.Type, t.ParamKey, t.OriginalValue)
-				fmt.Printf(" Info, original status: %s, modified status: %s, original words count: %d, modified words count: %d\n", responseData.Status, sqlCommentModResp.Status, responseData.WordsCount, len(strings.Fields(string(sqlCommentModResp.Body))))
+			if strings.Contains(sqlCommentModErrorResp.Status, "403") && !strings.Contains(responseData.Status, "403") {
+				found403s = true
+			}
+
+			diffInStatus := sqlCommentModErrorResp.Status != responseData.Status
+			diffInWordCount := len(strings.Fields(string(sqlCommentModErrorResp.Body))) - responseData.WordsCount
+			if diffInStatus || diffInWordCount > 0 {
+				if diffInStatus {
+					sqliInfo += fmt.Sprintf("Difference in Status when adding s%%252f**%%252f: %s vs %s. \n", sqlCommentModErrorResp.Status, responseData.Status)
+				}
+				if diffInWordCount > 0 {
+					sqliInfo += fmt.Sprintf("Difference in word count when adding s%%252f**%%252f: %d words. \n", diffInWordCount)
+				}
+
+				sqlCommentModGoodResp, err := client.Make(sqlCommentModGoodUrl, httpReqConfig)
+				if err != nil {
+					return fmt.Errorf("failed to make request: %s", err)
+				}
+
+				if strings.Contains(sqlCommentModGoodResp.Status, "403") && !strings.Contains(responseData.Status, "403") {
+					found403s = true
+				}
+
+				sameStatus := sqlCommentModGoodResp.Status == responseData.Status
+				diffInWordCount := len(strings.Fields(string(sqlCommentModGoodResp.Body))) - responseData.WordsCount
+				if sameStatus && diffInWordCount == 0 {
+					PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, "SQL Comment /**/", sqliInfo)
+				} else if found403s {
+					// some servers return 403 when they see /**/ in the url, at this point there is some indication that s SQLi is possible
+					sqliInfo += fmt.Sprintf("Some 403 found during request to s%%252f**%%252f or %%252f*ss*%%252f. \n")
+					PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, "SQL Comment /**/", sqliInfo)
+				}
+
 			}
 		}
 	}
@@ -287,57 +350,107 @@ func (t *FussTarget) SQLiScan(client *requests.HttpClient) error {
 			fmt.Println(fmt.Errorf("failed to make request: %s", err))
 		} else {
 			if addZeroResp.Status == responseData.Status && len(strings.Fields(string(addZeroResp.Body))) == responseData.WordsCount {
+				var sqliInfo string
+				addOneUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%2b1%2b0")
+				addTwoZeroesUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%2b0%2b0")
 
-				addZeroRespModUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%2b1")
-				addZeroRespModResp, err := client.Make(addZeroRespModUrl, httpReqConfig)
-
+				addOneUrlResp, err := client.Make(addOneUrl, httpReqConfig)
 				if err != nil {
 					return fmt.Errorf("failed to make request: %s", err)
 				}
 
-				if addZeroRespModResp.Status != responseData.Status || len(strings.Fields(string(addZeroRespModResp.Body))) != responseData.WordsCount {
-					fmt.Printf("SQLi Reflections found for %s: , type: %d, param: %s, original value: %s: Add Zero verification.\n", t.Url, t.Type, t.ParamKey, t.OriginalValue)
-					fmt.Printf(" Info, original status: %s, modified status: %s, original words count: %d, modified words count: %d\n", responseData.Status, addZeroRespModResp.Status, responseData.WordsCount, len(strings.Fields(string(addZeroRespModResp.Body))))
+				diffInStatus := addOneUrlResp.Status != responseData.Status
+				diffInWordCount := len(strings.Fields(string(addOneUrlResp.Body))) - responseData.WordsCount
+				if diffInStatus || diffInWordCount > 0 {
+					// different response when adding +1+0, same response on +0
+
+					if diffInStatus {
+						sqliInfo += fmt.Sprintf("Difference in Status when adding %%2b1%%2b0: %s vs %s. \n", addOneUrlResp.Status, responseData.Status)
+					}
+					if diffInWordCount > 0 {
+						sqliInfo += fmt.Sprintf("Difference in word count when adding %%2b1%%2b0: %d words. \n", diffInWordCount)
+					}
+
+					addTwoZeroesResp, err := client.Make(addTwoZeroesUrl, httpReqConfig)
+					if err != nil {
+						return fmt.Errorf("failed to make request: %s", err)
+					}
+
+					sameStatus := addTwoZeroesResp.Status == responseData.Status
+					diffInWordCount := len(strings.Fields(string(addTwoZeroesResp.Body))) - responseData.WordsCount
+					if sameStatus && diffInWordCount == 0 {
+						sqliInfo += fmt.Sprintf("Same response when adding %%2b0%%2b0. \n")
+
+						PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, "Add Zero verification", sqliInfo)
+					}
 				}
 			}
 		}
 	}
 
-	addSingleQuoteResp, err := client.Make(addSingleQuoteUrl, httpReqConfig)
+	err = t.internalSQLiWithQuotes("'", "Single Quote", client, &responseData)
+
 	if err != nil {
 		fmt.Println(fmt.Errorf("failed to make request: %s", err))
-	} else {
-		if addSingleQuoteResp.Status != responseData.Status || len(strings.Fields(string(addSingleQuoteResp.Body))) != responseData.WordsCount {
-			addSingleQuoteRespModUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"''")
-			addSingleQuoteRespModResp, err := client.Make(addSingleQuoteRespModUrl, httpReqConfig)
-
-			if err != nil {
-				return fmt.Errorf("failed to make request: %s", err)
-			}
-
-			if addSingleQuoteRespModResp.Status == responseData.Status && len(strings.Fields(string(addSingleQuoteRespModResp.Body))) == responseData.WordsCount {
-				fmt.Printf("SQLi Reflections found for %s: , type: %d, param: %s, original value: %s: Single Quote\n", t.Url, t.Type, t.ParamKey, t.OriginalValue)
-				fmt.Printf(" Info, original status: %s, modified status: %s, original words count: %d, modified words count: %d\n", responseData.Status, addSingleQuoteRespModResp.Status, responseData.WordsCount, len(strings.Fields(string(addSingleQuoteRespModResp.Body))))
-			}
-		}
 	}
 
-	addDoubleQuoteResp, err := client.Make(addDoubleQuoteUrl, httpReqConfig)
+	err = t.internalSQLiWithQuotes("%22", "Double Quote", client, &responseData)
+
+	return err
+}
+
+// same function works for both single and double quotes
+func (t *FussTarget) internalSQLiWithQuotes(quotesChar string, quotesName string, client *requests.HttpClient, baseResp *ResponseData) error {
+	httpReqConfig := requests.HttpReqConfig{
+		HTTPMethod: requests.GET,
+	}
+	addQuoteUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+quotesChar)
+	addQuoteResp, err := client.Make(addQuoteUrl, httpReqConfig)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %s", err)
-	} else {
-		if addDoubleQuoteResp.Status != responseData.Status || len(strings.Fields(string(addDoubleQuoteResp.Body))) != responseData.WordsCount {
-			addDoubleQuoteRespModUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+"%22%22")
-			addDoubleQuoteRespModResp, err := client.Make(addDoubleQuoteRespModUrl, httpReqConfig)
+	}
 
-			if err != nil {
-				return fmt.Errorf("failed to make request: %s", err)
+	diffInStatus := addQuoteResp.Status != baseResp.Status
+	diffInWordCount := len(strings.Fields(string(addQuoteResp.Body))) - baseResp.WordsCount
+	if diffInStatus || diffInWordCount > 0 {
+		// different response when adding a quote
+		var sqliInfo string
+		if diffInStatus {
+			sqliInfo += fmt.Sprintf("Difference in Status when adding %s: %s vs %s. \n", quotesChar, addQuoteResp.Status, baseResp.Status)
+		}
+		if diffInWordCount > 0 {
+			sqliInfo += fmt.Sprintf("Difference in word count when adding %s: %d words. \n", quotesChar, diffInWordCount)
+		}
+
+		addTwoQuotesUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+quotesChar+quotesChar)
+		addTwoQuotesResp, err := client.Make(addTwoQuotesUrl, httpReqConfig)
+		if err != nil {
+			return fmt.Errorf("failed to make request: %s", err)
+		}
+
+		sameStatus := addTwoQuotesResp.Status == baseResp.Status
+		diffInWordCount := len(strings.Fields(string(addTwoQuotesResp.Body))) - baseResp.WordsCount
+		if sameStatus && diffInWordCount == 0 {
+			addThreeQuotesUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+quotesChar+quotesChar+quotesChar)
+			addFourQuotesUrl := strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue+quotesChar+quotesChar+quotesChar+quotesChar)
+
+			addThreeQuotesResp, err3 := client.Make(addThreeQuotesUrl, httpReqConfig)
+
+			addFourQuotesResp, err4 := client.Make(addFourQuotesUrl, httpReqConfig)
+
+			if err3 == nil && err4 == nil {
+				diffInStatusThree := addThreeQuotesResp.Status != baseResp.Status
+				diffInWordCountThree := len(strings.Fields(string(addThreeQuotesResp.Body))) - baseResp.WordsCount
+				sameStatusFour := addFourQuotesResp.Status == baseResp.Status
+				diffInWordCountFour := len(strings.Fields(string(addFourQuotesResp.Body))) - baseResp.WordsCount
+
+				if (diffInStatusThree || diffInWordCountThree > 0) && (sameStatusFour && diffInWordCountFour == 0) {
+					sqliInfo += "Double verification with three and four quotes. \n"
+
+				}
 			}
 
-			if addDoubleQuoteRespModResp.Status == responseData.Status && len(strings.Fields(string(addDoubleQuoteRespModResp.Body))) == responseData.WordsCount {
-				fmt.Printf("SQLi Reflections found for %s: , type: %d, param: %s, original value: %s: Double Quote\n", t.Url, t.Type, t.ParamKey, t.OriginalValue)
-				fmt.Printf(" Info, original status: %s, modified status: %s, original words count: %d, modified words count: %d\n", responseData.Status, addDoubleQuoteRespModResp.Status, responseData.WordsCount, len(strings.Fields(string(addDoubleQuoteRespModResp.Body))))
-			}
+			PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, quotesName, sqliInfo)
 		}
 	}
 
@@ -363,8 +476,60 @@ func (t *FussTarget) ScanForServerErrors(client *requests.HttpClient) error {
 	}
 
 	if strings.HasPrefix("5", Resp.Status) {
-		fmt.Printf("Server Error found for %s: , type: %d, param: %s, original value: %s\n", t.Url, t.Type, t.ParamKey, t.OriginalValue)
+		fmt.Printf("Server Error - %s - %s - payload: %s \n", t.Url, Resp.Status, payload)
 	}
 
 	return nil
+}
+
+func PrintXssResult(url string, typeDetection TargetType, param string, originalValue string, xssRefs []string, addInfo string) {
+	info := ""
+	switch typeDetection {
+	case PARAM:
+		info = "query param"
+	case PATH_BIT:
+		info = "path bit"
+	case PARAM_DISCOVERY:
+		info = "param discovery"
+	}
+
+	if param != "" {
+		info += fmt.Sprintf(" - param %s=%s", param, originalValue)
+	}
+
+	if typeDetection == PATH_BIT {
+		info += fmt.Sprintf(" - original value %s", originalValue)
+	}
+
+	if addInfo != "" {
+		info += fmt.Sprintf(" - %s ", addInfo)
+	}
+
+	fmt.Printf("XSS - %s - %s", url, info)
+}
+
+func PrintSQLiResult(url string, typeDetection TargetType, param string, originalValue string, sqliType string, addInfo string) {
+	info := ""
+	switch typeDetection {
+	case PARAM:
+		info = "query param"
+	case PATH_BIT:
+		info = "path bit"
+	case PARAM_DISCOVERY:
+		info = "param discovery"
+	}
+
+	if param != "" {
+		info += fmt.Sprintf(" - param %s=%s", param, originalValue)
+	}
+
+	if typeDetection == PATH_BIT {
+		info += fmt.Sprintf(" - original value %s", originalValue)
+	}
+
+	if addInfo != "" {
+		info += fmt.Sprintf("\n Finding info: %s ", addInfo)
+	}
+
+	fmt.Printf("SQLi - %s - %s", url, info)
 }

@@ -65,7 +65,7 @@ func main() {
 
 				parsed, err := url.Parse(u)
 				if err != nil || parsed.Host == "" {
-					fmt.Fprintf(os.Stderr, "fuss, failed to parse url: %s\n", err)
+					fmt.Printf("fuss, failed to parse url: %s\n", err)
 					continue
 				}
 
@@ -78,7 +78,7 @@ func main() {
 					qparams2.Set(key, fusstarget.ReplaceFuss)
 
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "fuss, failed to parse url: %s\n", err)
+						fmt.Printf("fuss, failed to parse url: %s\n", err)
 						continue
 					}
 
@@ -164,19 +164,19 @@ func main() {
 
 					err := target.XssScan(&httpClients[i])
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "fuss, failed to scan for xss: %s\n", err)
+						fmt.Printf("fuss, failed to scan for xss: %s\n", err)
 						target.XssScan(&httpClients[i])
 					}
 
 					err = target.SQLiScan(&httpClients[i])
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "fuss, failed to scan for sqli: %s\n", err)
+						fmt.Printf("fuss, failed to scan for sqli: %s\n", err)
 						target.SQLiScan(&httpClients[i])
 					}
 
 					err = target.ScanForServerErrors(&httpClients[i])
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "fuss, failed to scan for server errors: %s\n", err)
+						fmt.Printf("fuss, failed to scan for server errors: %s\n", err)
 						target.ScanForServerErrors(&httpClients[i])
 					}
 				}
@@ -194,7 +194,6 @@ func main() {
 
 	for sc.Scan() {
 		u := sc.Text()
-
 		urls <- u
 	}
 
@@ -202,7 +201,7 @@ func main() {
 
 	// check there were no errors reading stdin (unlikely)
 	if err := sc.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read input: %s\n", err)
+		fmt.Printf("failed to read input: %s\n", err)
 	}
 
 	// Wait until the output waitgroup is done

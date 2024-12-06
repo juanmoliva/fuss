@@ -277,6 +277,7 @@ func (t *FussTarget) SQLiScan(client *requests.HttpClient) error {
 	} else {
 		originalResp, err := client.Make(originalUrl, httpReqConfig)
 		if err != nil {
+			ResponsesMutex.Unlock()
 			return fmt.Errorf("failed to make request: %s", err)
 		}
 
@@ -447,10 +448,10 @@ func (t *FussTarget) internalSQLiWithQuotes(quotesChar string, quotesName string
 				if (diffInStatusThree || diffInWordCountThree > 0) && (sameStatusFour && diffInWordCountFour == 0) {
 					sqliInfo += "Double verification with three and four quotes. \n"
 
+					PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, quotesName, sqliInfo)
+
 				}
 			}
-
-			PrintSQLiResult(t.Url, t.Type, t.ParamKey, t.OriginalValue, quotesName, sqliInfo)
 		}
 	}
 
@@ -475,8 +476,16 @@ func (t *FussTarget) ScanForServerErrors(client *requests.HttpClient) error {
 		return fmt.Errorf("failed to make request: %s", err)
 	}
 
-	if strings.HasPrefix("5", Resp.Status) {
-		fmt.Printf("Server Error - %s - %s - payload: %s \n", t.Url, Resp.Status, payload)
+	if strings.HasPrefix(Resp.Status, "5") {
+		RespOriginal, err := client.Make(strings.ReplaceAll(t.Url, ReplaceFuss, t.OriginalValue), httpReqConfig)
+		if err != nil {
+			return fmt.Errorf("failed to make request: %s", err)
+		}
+
+		if RespOriginal.Status != Resp.Status {
+			// server error confirmed to be caused by the payload
+			fmt.Printf("Server Error - %s - %s - payload: %s \n", t.Url, Resp.Status, payload)
+		}
 	}
 
 	return nil
@@ -505,7 +514,7 @@ func PrintXssResult(url string, typeDetection TargetType, param string, original
 		info += fmt.Sprintf(" - %s ", addInfo)
 	}
 
-	fmt.Printf("XSS - %s - %s", url, info)
+	fmt.Printf("XSS - %s - %s - %s \n", url, info, strings.Join(xssRefs, ", "))
 }
 
 func PrintSQLiResult(url string, typeDetection TargetType, param string, originalValue string, sqliType string, addInfo string) {
@@ -528,8 +537,8 @@ func PrintSQLiResult(url string, typeDetection TargetType, param string, origina
 	}
 
 	if addInfo != "" {
-		info += fmt.Sprintf("\n Finding info: %s ", addInfo)
+		info += fmt.Sprintf("\nFinding info: %s ", addInfo)
 	}
 
-	fmt.Printf("SQLi - %s - %s", url, info)
+	fmt.Printf("SQLi - %s - %s \n", url, info)
 }

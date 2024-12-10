@@ -19,13 +19,25 @@ func main() {
 	var Threads int
 	var Proxy string
 	var DenseFuss bool
+	var Headers []string
 
 	flag.BoolVarP(&DebugMode, "debug", "d", false, "enable debug mode")
 	flag.IntVarP(&Threads, "threads", "t", 5, "number of threads, default 5")
 	flag.BoolVar(&DenseFuss, "dense", false, "enable dense fuzzing mode: every path segment and every combination tested.")
 	flag.StringVarP(&Proxy, "proxy", "p", "", "proxy to use for requests")
+	flag.StringArrayVar(&Headers, "header", []string{}, "headers to add to requests")
 
 	flag.Parse()
+
+	headersMap := make(map[string]string)
+	for _, header := range Headers {
+		headerParts := strings.Split(header, ":")
+		if len(headerParts) != 2 {
+			fmt.Println("Invalid header format, must be in the format 'HeaderName:HeaderValue'")
+			os.Exit(1)
+		}
+		headersMap[headerParts[0]] = headerParts[1]
+	}
 
 	if Threads < 1 {
 		fmt.Println("Threads must be greater than 0")
@@ -39,6 +51,7 @@ func main() {
 	httpClientConfig := requests.HttpClientConfig{
 		DebugMode: DebugMode,
 		Proxy:     Proxy,
+		Headers:   headersMap,
 	}
 
 	var httpClients []requests.HttpClient

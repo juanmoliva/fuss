@@ -18,6 +18,7 @@ import (
 type HttpClientConfig struct {
 	AuthorizationHeader string
 	DebugMode           bool
+	Headers             map[string]string
 	Proxy               string
 }
 
@@ -220,6 +221,10 @@ func (httpClient HttpClient) makeHTTP(url string, config HttpReqConfig) (r *http
 	}
 
 	for k, v := range lookalikeBrowserHeaders {
+		req.Header.Set(k, v)
+	}
+
+	for k, v := range httpClient.Config.Headers {
 		req.Header.Set(k, v)
 	}
 

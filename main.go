@@ -25,7 +25,7 @@ func main() {
 	flag.IntVarP(&Threads, "threads", "t", 5, "number of threads, default 5")
 	flag.BoolVar(&DenseFuss, "dense", false, "enable dense fuzzing mode: every path segment and every combination tested.")
 	flag.StringVarP(&Proxy, "proxy", "p", "", "proxy to use for requests")
-	flag.StringArrayVar(&Headers, "header", []string{}, "headers to add to requests")
+	flag.StringArrayVarP(&Headers, "header", "H", []string{}, "HTTP header to include in the request")
 
 	flag.Parse()
 
